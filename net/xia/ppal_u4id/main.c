@@ -489,7 +489,7 @@ static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
 	uh->len = htons(uhlen + udp_payload_len);
 
 	udp_set_csum(tunnel_sk->sk_no_check_tx, skb, inet->inet_saddr,
-		     dest_ip_addr, uhlen + udp_payload_len);
+		     dest_ip_addr, uhLen + udp_payload_len);
 }
 
 static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
