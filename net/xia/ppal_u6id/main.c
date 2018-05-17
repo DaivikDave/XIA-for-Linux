@@ -10,21 +10,132 @@
 /* U6ID Principal */
 #define XIDTYPE_U6ID (__cpu_to_be32(0x1b))
 
-static int __net_init u6id_net_init(struct net *net)
+struct xip_u6id_ctx {
+    struct xip_ppal_ctx ctx;
+
+    struct socket __rcu *tunnel_sock;
+
+    struct xip_dst_anchor ill_anchor;
+
+    struct xip_dst_anchor forward_anchor;
+};
+
+static inline struct xip_u6id_ctx *ctx_u6id(struct xip_ppal_ctx *ctx)
+{
+    return likely(ctx)
+    ? container_of(ctx, struct xip_u6id_ctx, ctx)
+    :NULL
+}
+
+static int my_vxt __read_mostly = -1;
+
+/* Use a list FIB. */
+static const struct xia_ppal_rt_iops *u6id_rt_iops = &xia_ppal_list_rt_iops;
+
+static int local_newroute(struct xip_ppal_ctx *ctx,
+            struct fib_xid_table *xtbl,
+            struct xia_fib_config *cfg){
+}
+
+static int local_delroute(struct xip_ppal_ctx *ctx,
+            struct fib_xid_table *xtbl,
+            struct xia_fib_config *cfg){
+}
+
+static int local_dump_u6id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+                struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+                struct netlink_callback *cb){
+    
+}
+
+/* Don't call this function! Use free_fxid instead. */
+static void local_free_u6id(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 
 }
 
+static const xia_ppal_all_rt_eops_t u6id_all_rt_eops = {
+  [XRTABLE_LOCAL_INDEX] ={
+       .newroute = local_newroute,
+       .delroute = local_delroute,
+       .dump_fxid = local_dump_u6id,
+       .free_fxid = local_free_u6id,
+  },  
+};
+/* Network namespace */
+
+static struct xip_u6id_ctx *create_u6id_ctx(void)
+{
+    struct xip_u6id_ctx *u6id_ctx = kmalloc(sizeof(*u6id_ctx),GPF_KERNEL);
+
+    if(!u6id_ctx)
+        return NULL;
+    xip_init_ppal_ctx(&u6id_ctx->ctx, XIDTYPE_U6ID);
+    xdst_init_anchor(&u6id_ctx->ill_anchor);
+    xdst_init_anchor(&u6id_ctx->forward_anchor);
+    RCU_INIT_POINTER(u6id_ctx->tunnel_sock, NULL);
+    return u6id_ctx;
+}
+
+/* IMPORTANT! Caller must RCU synch before calling this function. */
+static void free_u6id_ctx(struct xip_u6id_ctx *u6id_ctx)
+{ 
+    /* There are no other writers for the tunnel socket, since
+	 * no local entries can be added or removed by the user
+	 * since xip_del_ppal_ctx has already been called.
+	 */
+    RCU_INIT_POINTER(u6id_ctx->tunnel_sock, NULL);
+    /* There is no need to find the struct fib_xid_u6id_local
+	 * that held the tunnel socket in order to set its
+	 * tunnel field to false. The only read of the tunnel
+	 * field happens in local_delroute, which can no longer
+	 * be invoked since xip_del_ppal_ctx has already been called.
+	 *
+	 * Therefore, a local entry can incorrectly yet harmlessly hold
+	 * a tunnel field of true for a brief time until it is freed
+	 * even though the tunnel is no longer active.
+	 */
+
+    xdst_free_anchor(&u6id_ctx->forward_anchor);
+    xdst_free_anchor(&u6id_ctx->ill_anchor);
+    xip_release_ppal_ctx(&u6id_ctx->ctx);
+    kfree(u6id_ctx);
+}
+
+static int __net_init u6id_net_init(struct net *net)
+{
+    struct xip_u6id_ctx *u6id_ctx;
+    int rc;
+
+    u6id_ctx = create_u6id_ctx();
+    if(!u6id_ctx) {
+        rc = -ENOMEM;
+        goto out;
+    }
+    
+    rc = u6id_rt_iops->xtbl_init(&u6id_ctx->ctx, net,
+                      &xia_main_lock_table, u6id_all_rt_eops,
+                      u6id_rt_iops);
+    if(rc)
+        goto u6id_ctx;
+    goto out;
+
+u6id_ctx:
+    free_u6id_ctx(u6id_ctx);
+out:
+    return rc;
+}
+
 static void __net_exit u6id_net_exit(struct net *net)
 {
-
+    struct xip_u6id_ctx *u6id_ctx = ctx_u6id(xip_del_ppal_ctx(net, XIDTYPE_U6ID));
+    free_u6id_ctx(u6id_ctx);
 }
 
 static struct pernet_operations u6id_net_ops __read_mostly = {
     .init = u6id_net_init,
     .exit = u6id_net_exit,
 };
-
 static int u6id_deliver(void) {
 
 }
