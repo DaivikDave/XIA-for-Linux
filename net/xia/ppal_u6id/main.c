@@ -42,9 +42,10 @@ struct u6id_xid {
 };
 
 static inline int u6id_well_formed(const u8 *xid){
-		struct u6id_xid *st_xid = (struct u6id_xid *)xid;
-		BUILD_BUG_ON(sizeof(struct u6id_xid) != XIA_XID_MAX);
-		return st_xid->ip_addr && st_xid->udp_port && !st_xid->zero1;
+	struct u6id_xid *st_xid = (struct u6id_xid *)xid;
+
+	BUILD_BUG_ON(sizeof(struct u6id_xid) != XIA_XID_MAX);
+	return st_xid->ip_addr && st_xid->udp_port && !st_xid->zero1;
 }
 
 struct fib_xid_u6id_local {
@@ -75,9 +76,9 @@ struct local_u6id_info {
 	
 static inline struct fib_xid_u6id_local *fxid_lu6id(struct fib_xid *fxid)
 {
-		return likely(fxid)
-			?container_of(fxid, struct fib_xid_u6id_local, common)
-			:NULL;
+	return likely(fxid)
+		?container_of(fxid, struct fib_xid_u6id_local, common)
+		:NULL;
 }
 
 /* Callback function to handle UDP datagrams delivered
@@ -148,16 +149,17 @@ out:
 /* Workqueue local U6ID deletion function. */
 static void u6id_local_del_work(struct work_struct *work)
 {
-		struct fib_xid_u6id_local *lu6id =
-				container_of(work, struct fib_xid_u6id_local, del_work);
+	struct fib_xid_u6id_local *lu6id =
+		container_of(work, struct fib_xid_u6id_local, del_work);
 		if(lu6id->sock) {
 			kernel_sock_shutdown(lu6id->sock, SHUT_RDWR);
 			sock_release(lu6id->sock);
 			lu6id->sock = NULL;
 		}
-		xdst_free_anchor(&lu6id->anchor);
-		kfree(lu6id);
+	xdst_free_anchor(&lu6id->anchor);
+	kfree(lu6id);
 }
+
 static int local_newroute(struct xip_ppal_ctx *ctx,
             struct fib_xid_table *xtbl,
             struct xia_fib_config *cfg)
@@ -230,7 +232,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 		 * It's also needed for u6id_local_del_work() below.
 		 */
 		synchronize_rcu();
-		xdst_free_anchor(&u4id_ctx->forward_anchor);
+		xdst_free_anchor(&u6id_ctx->forward_anchor);
 	}else{
 		/* Needed for u6id_local_del_work() below. */
 		synchronize_rcu();
@@ -247,8 +249,8 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 }
 
 static int local_dump_u6id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-				struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-                struct netlink_callback *cb)
+						   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+						   struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
