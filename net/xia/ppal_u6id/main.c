@@ -9,7 +9,7 @@
 
 /* U6ID Principal */
 #define XIDTYPE_U6ID (__cpu_to_be32(0x1b))
-
+#define IPV6_ADDR_LEN 128;
 struct xip_u6id_ctx {
     struct xip_ppal_ctx ctx;
 
@@ -24,7 +24,7 @@ static inline struct xip_u6id_ctx *ctx_u6id(struct xip_ppal_ctx *ctx)
 {
     return likely(ctx)
     ? container_of(ctx, struct xip_u6id_ctx, ctx)
-    :NULL
+    :NULL;
 }
 
 static int my_vxt __read_mostly = -1;
@@ -119,18 +119,21 @@ static int create_lu6id_socket(struct fib_xid_u6id_local *lu6id,
 {
   	struct udp_port_cfg udp_conf;
 	int rc;
-	__u8  xid_addr[16];
+
 	__be16 xid_port;
 
-	/* Fetch IPv6 address and port number from U6ID XID. */
-	xid_addr = *(__u8 (*)[16])xid_p;
-	xid_p += sizeof(xid_addr);
-	xid_port = *(__be16 *)xid_p;
-
+	
+	
 	memset(&udp_conf, 0, sizeof(udp_conf));
 	udp_conf.family = AF_INET6;
-	udp_conf.local_ip6.u6_addr8 = xid_addr;
-	udp_conf.local_udp_port = xid_port;
+	
+    /* Copy the IPv6 Address */
+    memcpy(&udp_conf.local_ip6.s6_addr,&xid_p,sizeof(udp_conf.local_ip6.s6_addr)); 
+	
+    xid_p += IPV6_ADDR_LEN;
+	xid_port = *(__be16 *)xid_p;
+
+    udp_conf.local_udp_port = xid_port;
 	udp_conf.use_udp_checksums = !lu6id->no_check;
 
 	rc = udp_sock_create(net, &udp_conf, &lu6id->sock);
@@ -177,7 +180,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if(lu6id_info->tunnel && u6id_ctx->tunnel_sock)
 		return -EEXIST;
 
-	lu6id = u6id_rt_iops->fxid_ppal_alloc(sizeof(*lu6id),GPF_KERNEL);
+	lu6id = u6id_rt_iops->fxid_ppal_alloc(sizeof(*lu6id),GFP_KERNEL);
 	if(!lu6id)
 		return -ENOMEM;
 	fxid_init(xtbl, &lu6id->common, cfg->xfc_dst->xid_id,XRTABLE_LOCAL_INDEX, 0);
@@ -185,15 +188,41 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	lu6id->sock = NULL;
 	INIT_WORK(&lu6id->del_work, u6id_local_del_work);
 	lu6id->tunnel = lu6id_info->tunnel;
-	lu6id->no_check = lu6id_info->no_check;
+    lu6id->no_check = lu6id_info->no_check;
 
-	rc = create_lu6id_socket(lu6id, xtbl_fxt_net, cfg->xfc_dst->xid_id);
+    rc = create_lu6id_socket(lu6id, xtbl->fxt_net, cfg->xfc_dst->xid_id);
 	if(rc)
 		goto lu6id;
 
 	rc = u6id_rt_iops->fib_newroute(&lu6id->common, xtbl, cfg, NULL);
 	if(rc)
 		goto lu6id;
+
+    /* We need to initialize the tunnel after the entry is 
+     * added , so that u6id_deliver() does not see the tunnel
+     * when adding the local entry fails.
+     */
+    if(lu6id_info->tunnel) {
+        lu6id->sock->sk->sk_no_check_tx = lu6id_info->no_check;
+        rcu_assign_pointer(u6id_ctx->tunnel_sock, lu6id->sock);
+        
+        /* Wait an RCU cycle before flushing the anchor.
+		 * Otherwise, a thread in u4id_deliver() could see the tunnel
+		 * socket as NULL, but before it could add a negative
+		 * dependency, another thread running this function
+		 * adds the tunnel and flushes the negative dependencies.
+		 * Then the first thread would be adding an incorrect
+		 * negative dependency that won't be flushed soon.
+		 */
+		synchronize_rcu();
+		xdst_free_anchor(&u6id_ctx->forward_anchor);
+
+    }
+    goto out;
+lu6id:
+    u6id_local_del_work(&lu6id->del_work);
+out:
+    return rc;
 }
 
 static int local_delroute(struct xip_ppal_ctx *ctx,
@@ -318,7 +347,7 @@ static const xia_ppal_all_rt_eops_t u6id_all_rt_eops = {
 
 static struct xip_u6id_ctx *create_u6id_ctx(void)
 {
-    struct xip_u6id_ctx *u6id_ctx = kmalloc(sizeof(*u6id_ctx),GPF_KERNEL);
+    struct xip_u6id_ctx *u6id_ctx = kmalloc(sizeof(*u6id_ctx),GFP_KERNEL);
 
     if(!u6id_ctx)
         return NULL;
@@ -397,7 +426,7 @@ static struct xip_route_proc u6id_rt_proc __read_mostly = {
     .deliver = u6id_deliver,
 };
 
-static __init xia_u6id_init(void)
+static int  __init xia_u6id_init(void)
 {
     int rc;
 
@@ -449,5 +478,5 @@ static void __exit xia_u6id_exit(void)
 module_init(xia_u6id_init);
 module_exit(xia_u6id_exit);
 
-MODULE_LICENCE("GPL");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XIA UDP/IPv6 Principal");
