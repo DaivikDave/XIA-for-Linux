@@ -8,7 +8,7 @@
 #include <net/dst_ops.h>
 
 /* Maximum number of XID types recognized at the same time. */
-#define XIP_MAX_XID_TYPES	8
+#define XIP_MAX_XID_TYPES	9
 
 /* It must be a power of 2. */
 #define XIP_DST_TABLE_SIZE	256

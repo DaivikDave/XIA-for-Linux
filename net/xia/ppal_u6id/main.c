@@ -8,7 +8,7 @@
 #include <uapi/linux/udp.h>
 
 /* U6ID Principal */
-#define XIDTYPE_U6ID (__cpu_to_be32(0x1b))
+#define XIDTYPE_U6ID (__cpu_to_be32(0x05))
 #define IPV6_ADDR_LEN 128;
 struct xip_u6id_ctx {
     struct xip_ppal_ctx ctx;
@@ -432,7 +432,7 @@ static int  __init xia_u6id_init(void)
 
     rc = vxt_register_xidty(XIDTYPE_U6ID);
     if(rc < 0) {
-        pr_err("Can't obtain a virtual XID type for U6ID\n");
+        pr_err("Can't obtain a virtual XID type for U6ID.\n");
         goto out;
     }
     my_vxt = rc;
