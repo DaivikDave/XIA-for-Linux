@@ -567,8 +567,65 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
   return rc;
 }
 
-static int u6id_deliver(void) {
+  static int u6id_deliver(struct xip_route_proc *rproc,struct net *net,
+						  const u8*xid, struct xia_xid *next_xid,
+						  int anchor_index, struct xip_dst *xdst) {
+	struct xip_ppal_ctx *ctx;
+	struct xip_u6id_ctx *u6id_ctx;
+	struct fib_xid *fxid;
+	struct u6id_tunnel_dest *tunnel;
 
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_rcu(net, my_vxt);
+	u6id_ctx = ctx_u6id(ctx);
+
+	if(unlikely(!u6id_well_formed(xid))) {
+	  /* This XID is malformed. */
+	  xdst->passthrough_action = XDA_ERROR;
+	  xdst->sink_action = XDA_ERROR;
+	  xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->ill_anchor);
+	  rcu_read_unlock();
+	  return XRP_ACT_FORWARD;
+	}
+
+	fxid = u6id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
+	if(fxid){
+	  /* Reached tunnel destination; advance last node. */
+	  struct fib_xid_u6id_local = fxid_lu6id(fxid);
+	  xdst->passthrough_action = XDA_DIG;
+	  /* A local U6ID cannot be a sink. */
+	  xdst->sink_action = XDA_ERROR;
+	  xdst_attach_to_anchor(xdst, anchor_index, &lu6id->anchor);
+	  rcu_read_unlock();
+	  return XRP_ACT_FORWARD;
+	}
+
+	/* Assume an unknown, wll-formed U6ID is a tunnel destination. */
+	if(!rcu_dereference(u6id_ctx->tunnel_sock)) {
+	  xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->forward_anchor);
+	  rcu_read_unlock();
+	  return XRP_ACT_NEXT_EDGE;
+	}
+
+	/* Tunnel socket exist; set up XDST entry. */
+	tunnel = create_u6id_tunnel_dest(xid);
+	if(unlikely(!tunnel)) {
+	  rcu_read_unlock();
+	  /* Not enough memory to conclude this operation. */
+	  return XRP_ACT_ABRUPT_FAILURE;
+	}
+	xdst->info = tunnel;
+	xdst->ppal_destroy = def_ppal_destroy;
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD;
+	BUG_ON(xdst->dst.dev);
+	xdst->dst.dev = net->loopback_dev;
+	dev_hold(xdst->dst.dev);
+	xdst->dst.input =xdst_def_hop_limit_input_method;
+	xdst->dst.output = u6id_output;
+	xdst_attach_to_anchor(xdst,anchor_index, &u6id_ctx->forward_anchor);
+	rcu_read_unlock();
+	return XRP_ACT_FORWARD;
 }
 
 static struct xip_route_proc u6id_rt_proc __read_mostly = {
