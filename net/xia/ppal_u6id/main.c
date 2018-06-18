@@ -1,5 +1,8 @@
 #include <linux/init.h>
+#include <linux/in6.h>
 #include <linux/module.h>
+#include <net/ipv6.h>
+#include <net/ip6_checksum.h>
 #include <net/udp.h>
 #include <net/udp_tunnel.h>
 #include <net/xia_dag.h>
@@ -8,7 +11,7 @@
 #include <uapi/linux/udp.h>
 
 /* U6ID Principal */
-#define XIDTYPE_U6ID (__cpu_to_be32(0x05))
+#define XIDTYPE_U6ID (__cpu_to_be32(0x1a))
 #define IPV6_ADDR_LEN 128;
 struct xip_u6id_ctx {
     struct xip_ppal_ctx ctx;
@@ -399,6 +402,10 @@ static int __net_init u6id_net_init(struct net *net)
                       u6id_rt_iops);
     if(rc)
         goto u6id_ctx;
+    
+    rc = xip_add_ppal_ctx(net, &u6id_ctx->ctx);
+    if(rc)
+        goto u6id_ctx;
     goto out;
 
 u6id_ctx:
@@ -424,7 +431,7 @@ static struct pernet_operations u6id_net_ops __read_mostly = {
 struct u6id_tunnel_dest{
   struct in6_addr *dest_ip_addr;
   __be16 dest_port;
-}
+};
 
 static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) {
   struct u6id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel),GFP_ATOMIC);
@@ -434,7 +441,8 @@ static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) {
   memcpy(&tunnel->dest_ip_addr->s6_addr,&xid,sizeof(tunnel->dest_ip_addr->s6_addr)); 
 	
     xid += IPV6_ADDR_LEN;
-	xid_port = *(__be16 *)xid;
+	__be16 xid_port;
+    xid_port = *(__be16 *)xid;
 	tunnel->dest_port = xid_port;
 	return tunnel;
 }  
@@ -461,20 +469,20 @@ static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
   /* Set up UDP header. */
   skb_push(skb, uhlen);
   skb_reset_transport_header(skb);
-  uh= udphdr(skb);
+  uh= udp_hdr(skb);
   uh->source = inet->inet_sport;
   uh->dest = dest_port;
   uh->len = htons(uhlen + udp_payload_len);
 
-  udp6_set_csum(udp_get_no_check6_tx(sk),
-				skb,&inet6_sk(sk)->saddr,
+  udp6_set_csum(udp_get_no_check6_tx(tunnel_sk),
+				skb,&inet6_sk(tunnel_sk)->saddr,
 				dest_ip_addr, uhlen + udp_payload_len);
 				
 }
 
 static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
 							  struct in6_addr *dest_ip_addr, __be16 dest_port) {
-  struct inet_sock *inet = inet_sock(tunnel_sk);
+  struct inet_sock *inet = inet_sk(tunnel_sk);
   struct ipv6_pinfo *np = inet6_sk(tunnel_sk);
   struct flowi6 *fl6 = kmalloc(sizeof(*fl6),GFP_KERNEL);
   struct in6_addr *final_p, final;
@@ -482,7 +490,7 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   int rc;
   
   /* Reset @skb netfilter state. */
-  memset(&(IPCB(skb)->opt, 0, sizeof(IPCB(skb)->opt));
+  memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
   IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED | IPSKB_REROUTED);
   nf_reset(skb);
 
@@ -502,14 +510,14 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   fl6->flowi6_mark = tunnel_sk->sk_mark;
   fl6->fl6_sport = inet->inet_sport;
   fl6->fl6_dport = dest_port;
-  fl6->flowi6_uid = tunnel_sk->sk_uid;
+  //fl6->flowi6_uid = tunnel_sk->sk_uid;
   security_sk_classify_flow(tunnel_sk, flowi6_to_flowi(fl6));
 
   rcu_read_lock();
   final_p = fl6_update_dst(fl6, rcu_dereference(np->opt), &final);
 		 
 
-  dst = ip6_dst_lookup_flow(sk,&fl6,final_p);
+  dst = ip6_dst_lookup_flow(tunnel_sk,fl6,final_p);
   if(IS_ERR(dst)) {
 	 rc = PTR_ERR(dst);
 	 dst_release(dst);
@@ -518,7 +526,7 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   }
   skb_dst_set(skb,dst_clone(dst));
 		 
-  rc = ip6_xmit(tunnel_sk , skb , fl6, tunnel_sk->sk_mark,rcu_dereference(np->opt),np->tclass);
+  rc = ip6_xmit(tunnel_sk , skb , fl6, NULL,0);
   rcu_read_unlock();
   return rc;
 }
@@ -535,7 +543,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
    * expand it to make room. Adjust truesize.
    */
   if(skb_cow_head(skb,
-				  NET_SKB_PAD + sizeof(struct ipv6_hdr) + sizeof(udphdr))) {
+				  NET_SKB_PAD + sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
 	kfree(skb);
 	return NET_XMIT_DROP;
   }
@@ -591,7 +599,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	fxid = u6id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if(fxid){
 	  /* Reached tunnel destination; advance last node. */
-	  struct fib_xid_u6id_local = fxid_lu6id(fxid);
+	  struct fib_xid_u6id_local *lu6id = fxid_lu6id(fxid);
 	  xdst->passthrough_action = XDA_DIG;
 	  /* A local U6ID cannot be a sink. */
 	  xdst->sink_action = XDA_ERROR;
