@@ -7,12 +7,13 @@
 #include <net/udp_tunnel.h>
 #include <net/xia_dag.h>
 #include <net/xia_list_fib.h>
+#include <net/xia_u6id.h>
 #include <net/xia_vxidty.h>
 #include <uapi/linux/udp.h>
 
 /* U6ID Principal */
-#define XIDTYPE_U6ID (__cpu_to_be32(0x1a))
 #define IPV6_ADDR_LEN 128;
+
 struct xip_u6id_ctx {
     struct xip_ppal_ctx ctx;
 
@@ -72,11 +73,12 @@ struct fib_xid_u6id_local {
 	struct fib_xid		common;
 };
 
+/*
 struct local_u6id_info {
 	bool tunnel;
 	bool no_check;
 };
-	
+*/	
 static inline struct fib_xid_u6id_local *fxid_lu6id(struct fib_xid *fxid)
 {
 	return likely(fxid)
