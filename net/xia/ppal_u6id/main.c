@@ -12,7 +12,7 @@
 #include <uapi/linux/udp.h>
 
 /* U6ID Principal */
-#define IPV6_ADDR_LEN 128;
+#define IPV6_ADDR_LEN 16;
 
 struct xip_u6id_ctx {
     struct xip_ppal_ctx ctx;
@@ -133,16 +133,22 @@ static int create_lu6id_socket(struct fib_xid_u6id_local *lu6id,
 	udp_conf.family = AF_INET6;
 	
     /* Copy the IPv6 Address */
-    memcpy(&udp_conf.local_ip6.s6_addr,&xid_p,sizeof(udp_conf.local_ip6.s6_addr)); 
-	
+    memcpy(&udp_conf.local_ip6.s6_addr,xid_p,sizeof(udp_conf.local_ip6.s6_addr)); 
+	printk("\n");
+    int i=0;
+    for(i=0;i<16;i++){
+            printk("%02x",udp_conf.local_ip6.s6_addr[i]);
+        }
     xid_p += IPV6_ADDR_LEN;
 	xid_port = *(__be16 *)xid_p;
-
+    printk("\nport is %d",xid_port); 
     udp_conf.local_udp_port = xid_port;
-	udp_conf.use_udp_checksums = !lu6id->no_check;
-
-	rc = udp_sock_create(net, &udp_conf, &lu6id->sock);
-	if (rc)
+   
+	//udp_conf.use_udp6_tx_checksums = !lu6id->no_check;
+    //udp_conf.use_udp6_rx_checksums = !lu6id->no_check;
+	rc = udp_sock_create6(net, &udp_conf, &lu6id->sock);
+	printk("udpsock create got rc: %d",rc);
+    if (rc)
 		goto out;
 
 	/* Mark socket as an encapsulation socket. */
@@ -176,15 +182,16 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct xip_u6id_ctx *u6id_ctx;
 	struct local_u6id_info *lu6id_info;
 	int rc;
-
+    
+    printk("newroute");
 	if(!u6id_well_formed(cfg->xfc_dst->xid_id) || !cfg->xfc_protoinfo || cfg->xfc_protoinfo_len != sizeof(*lu6id_info))
 		return -EINVAL;
-
+    printk("valid u6id");
 	lu6id_info = cfg->xfc_protoinfo;
 	u6id_ctx = ctx_u6id(ctx);
 	if(lu6id_info->tunnel && u6id_ctx->tunnel_sock)
 		return -EEXIST;
-
+    printk("tunnel doesnt exist");
 	lu6id = u6id_rt_iops->fxid_ppal_alloc(sizeof(*lu6id),GFP_KERNEL);
 	if(!lu6id)
 		return -ENOMEM;
