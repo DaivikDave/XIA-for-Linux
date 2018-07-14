@@ -134,20 +134,16 @@ static int create_lu6id_socket(struct fib_xid_u6id_local *lu6id,
 	
     /* Copy the IPv6 Address */
     memcpy(&udp_conf.local_ip6.s6_addr,xid_p,sizeof(udp_conf.local_ip6.s6_addr)); 
-	printk("\n");
-    int i=0;
-    for(i=0;i<16;i++){
-            printk("%02x",udp_conf.local_ip6.s6_addr[i]);
-        }
+	
+    int i;
     xid_p += IPV6_ADDR_LEN;
-	xid_port = *(__be16 *)xid_p;
-    printk("\nport is %d",xid_port); 
+	xid_port =cpu_to_be16( *(__u16 *)xid_p);
     udp_conf.local_udp_port = xid_port;
    
-	//udp_conf.use_udp6_tx_checksums = !lu6id->no_check;
-    //udp_conf.use_udp6_rx_checksums = !lu6id->no_check;
-	rc = udp_sock_create6(net, &udp_conf, &lu6id->sock);
-	printk("udpsock create got rc: %d",rc);
+	udp_conf.use_udp6_tx_checksums = !lu6id->no_check;
+    udp_conf.use_udp6_rx_checksums = !lu6id->no_check;
+	
+    rc = udp_sock_create(net, &udp_conf, &lu6id->sock);
     if (rc)
 		goto out;
 
@@ -183,15 +179,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct local_u6id_info *lu6id_info;
 	int rc;
     
-    printk("newroute");
+   
 	if(!u6id_well_formed(cfg->xfc_dst->xid_id) || !cfg->xfc_protoinfo || cfg->xfc_protoinfo_len != sizeof(*lu6id_info))
 		return -EINVAL;
-    printk("valid u6id");
-	lu6id_info = cfg->xfc_protoinfo;
+   	lu6id_info = cfg->xfc_protoinfo;
 	u6id_ctx = ctx_u6id(ctx);
 	if(lu6id_info->tunnel && u6id_ctx->tunnel_sock)
 		return -EEXIST;
-    printk("tunnel doesnt exist");
+
 	lu6id = u6id_rt_iops->fxid_ppal_alloc(sizeof(*lu6id),GFP_KERNEL);
 	if(!lu6id)
 		return -ENOMEM;
@@ -447,7 +442,7 @@ static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) {
   if(!tunnel){
 	return NULL;
   }
-  memcpy(&tunnel->dest_ip_addr->s6_addr,&xid,sizeof(tunnel->dest_ip_addr->s6_addr)); 
+  memcpy(&tunnel->dest_ip_addr->s6_addr,xid,sizeof(tunnel->dest_ip_addr->s6_addr)); 
 	
     xid += IPV6_ADDR_LEN;
 	__be16 xid_port;
@@ -546,7 +541,9 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
   struct in6_addr *dest_ip_addr;
   __be16 dest_port;
   int rc;
+  
 
+  printk("u6id_output called \n");
   /* Check that there's enough headroom in the @skb to 
    * insert the IP and UDP headers. If not enough,
    * expand it to make room. Adjust truesize.
@@ -593,9 +590,12 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	struct u6id_tunnel_dest *tunnel;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(net, my_vxt);
-	u6id_ctx = ctx_u6id(ctx);
-
+    printk("xip_find_ppal_ctx\n");
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
+	printk("value of ctx is %p\n",(void *)ctx);
+    printk("ctx_u6id\n");
+    u6id_ctx = ctx_u6id(ctx);
+    printk("u6id context is: %p\n",(void *)u6id_ctx); 
 	if(unlikely(!u6id_well_formed(xid))) {
 	  /* This XID is malformed. */
 	  xdst->passthrough_action = XDA_ERROR;
@@ -604,7 +604,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	  rcu_read_unlock();
 	  return XRP_ACT_FORWARD;
 	}
-
+    printk("well_formed\n");
 	fxid = u6id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if(fxid){
 	  /* Reached tunnel destination; advance last node. */
@@ -616,7 +616,8 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	  rcu_read_unlock();
 	  return XRP_ACT_FORWARD;
 	}
-
+    
+    printk("fxid not found\n");
 	/* Assume an unknown, wll-formed U6ID is a tunnel destination. */
 	if(!rcu_dereference(u6id_ctx->tunnel_sock)) {
 	  xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->forward_anchor);
@@ -625,7 +626,8 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	}
 
 	/* Tunnel socket exist; set up XDST entry. */
-	tunnel = create_u6id_tunnel_dest(xid);
+	printk("create tunnel dest\n");
+    tunnel = create_u6id_tunnel_dest(xid);
 	if(unlikely(!tunnel)) {
 	  rcu_read_unlock();
 	  /* Not enough memory to conclude this operation. */
