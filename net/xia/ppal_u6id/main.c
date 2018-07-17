@@ -431,22 +431,31 @@ static struct pernet_operations u6id_net_ops __read_mostly = {
 
 /* U6ID Routing */
 
-/* Tunnel destingation information held in a DST endty. */
+/* Tunnel destination information held in a DST entry. */
 struct u6id_tunnel_dest{
   struct in6_addr *dest_ip_addr;
   __be16 dest_port;
 };
 
 static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) {
-  struct u6id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel),GFP_ATOMIC);
+  struct u6id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel),GFP_KERNEL);
   if(!tunnel){
-	return NULL;
+	printk("returning null:1");
+    return NULL;
+  }
+
+  tunnel->dest_ip_addr = kmalloc(sizeof(struct in6_addr),GFP_KERNEL);
+  if(!tunnel->dest_ip_addr)
+  {
+      kfree(tunnel);
+      printk("returning null:2");
+      return NULL;
   }
   memcpy(&tunnel->dest_ip_addr->s6_addr,xid,sizeof(tunnel->dest_ip_addr->s6_addr)); 
 	
     xid += IPV6_ADDR_LEN;
 	__be16 xid_port;
-    xid_port = *(__be16 *)xid;
+    xid_port =__cpu_to_be16(*(__u16 *)xid);
 	tunnel->dest_port = xid_port;
 	return tunnel;
 }  
@@ -489,6 +498,10 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   struct inet_sock *inet = inet_sk(tunnel_sk);
   struct ipv6_pinfo *np = inet6_sk(tunnel_sk);
   struct flowi6 *fl6 = kmalloc(sizeof(*fl6),GFP_KERNEL);
+  
+  if(!fl6)
+      return -ENOMEM;
+
   struct in6_addr *final_p, final;
   struct dst_entry *dst;
   int rc;
@@ -508,7 +521,8 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   /* Set up @fl6 */
   memset(fl6, 0, sizeof(*fl6));
   fl6->flowi6_proto = tunnel_sk->sk_protocol;
-  fl6->daddr = *dest_ip_addr;
+  //fl6->daddr = *dest_ip_addr;
+  memcpy(&fl6->daddr,dest_ip_addr,sizeof(*dest_ip_addr));
   fl6->saddr = np->saddr;
   fl6->flowi6_oif = tunnel_sk ->sk_bound_dev_if;
   fl6->flowi6_mark = tunnel_sk->sk_mark;
@@ -531,6 +545,7 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   skb_dst_set(skb,dst_clone(dst));
 		 
   rc = ip6_xmit(tunnel_sk , skb , fl6, NULL,0);
+  printk("handle skb to ipv6 got rc :%d",rc);
   rcu_read_unlock();
   return rc;
 }
