@@ -135,7 +135,7 @@ static int create_lu6id_socket(struct fib_xid_u6id_local *lu6id,
     /* Copy the IPv6 Address */
     memcpy(&udp_conf.local_ip6.s6_addr,xid_p,sizeof(udp_conf.local_ip6.s6_addr)); 
 	
-    int i;
+    
     xid_p += IPV6_ADDR_LEN;
 	xid_port =cpu_to_be16( *(__u16 *)xid_p);
     udp_conf.local_udp_port = xid_port;
@@ -438,24 +438,24 @@ struct u6id_tunnel_dest{
 };
 
 static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) {
-  struct u6id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel),GFP_KERNEL);
-  if(!tunnel){
-	printk("returning null:1");
-    return NULL;
+  struct u6id_tunnel_dest *tunnel;
+  __be16 xid_port;
+
+  tunnel = kmalloc(sizeof(*tunnel),GFP_KERNEL);
+  if(!tunnel) {
+	return NULL;
   }
 
   tunnel->dest_ip_addr = kmalloc(sizeof(struct in6_addr),GFP_KERNEL);
   if(!tunnel->dest_ip_addr)
   {
       kfree(tunnel);
-      printk("returning null:2");
       return NULL;
   }
   memcpy(&tunnel->dest_ip_addr->s6_addr,xid,sizeof(tunnel->dest_ip_addr->s6_addr)); 
 	
     xid += IPV6_ADDR_LEN;
-	__be16 xid_port;
-    xid_port =__cpu_to_be16(*(__u16 *)xid);
+	xid_port =__cpu_to_be16(*(__u16 *)xid);
 	tunnel->dest_port = xid_port;
 	return tunnel;
 }  
@@ -497,15 +497,17 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
 							  struct in6_addr *dest_ip_addr, __be16 dest_port) {
   struct inet_sock *inet = inet_sk(tunnel_sk);
   struct ipv6_pinfo *np = inet6_sk(tunnel_sk);
-  struct flowi6 *fl6 = kmalloc(sizeof(*fl6),GFP_KERNEL);
-  
-  if(!fl6)
-      return -ENOMEM;
-
+  struct flowi6 *fl6;
   struct in6_addr *final_p, final;
   struct dst_entry *dst;
   int rc;
   
+  fl6= kmalloc(sizeof(*fl6),GFP_KERNEL);
+  
+  if(!fl6)
+      return -ENOMEM;
+
+ 
   /* Reset @skb netfilter state. */
   memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
   IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED | IPSKB_REROUTED);
@@ -528,7 +530,7 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   fl6->flowi6_mark = tunnel_sk->sk_mark;
   fl6->fl6_sport = inet->inet_sport;
   fl6->fl6_dport = dest_port;
-  //fl6->flowi6_uid = tunnel_sk->sk_uid;
+  
   security_sk_classify_flow(tunnel_sk, flowi6_to_flowi(fl6));
 
   rcu_read_lock();
@@ -545,7 +547,7 @@ static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
   skb_dst_set(skb,dst_clone(dst));
 		 
   rc = ip6_xmit(tunnel_sk , skb , fl6, NULL,0);
-  printk("handle skb to ipv6 got rc :%d",rc);
+  
   rcu_read_unlock();
   return rc;
 }
@@ -558,7 +560,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
   int rc;
   
 
-  printk("u6id_output called \n");
+  
   /* Check that there's enough headroom in the @skb to 
    * insert the IP and UDP headers. If not enough,
    * expand it to make room. Adjust truesize.
@@ -605,12 +607,10 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	struct u6id_tunnel_dest *tunnel;
 
 	rcu_read_lock();
-    printk("xip_find_ppal_ctx\n");
+    
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	printk("value of ctx is %p\n",(void *)ctx);
-    printk("ctx_u6id\n");
-    u6id_ctx = ctx_u6id(ctx);
-    printk("u6id context is: %p\n",(void *)u6id_ctx); 
+	u6id_ctx = ctx_u6id(ctx);
+     
 	if(unlikely(!u6id_well_formed(xid))) {
 	  /* This XID is malformed. */
 	  xdst->passthrough_action = XDA_ERROR;
@@ -619,7 +619,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	  rcu_read_unlock();
 	  return XRP_ACT_FORWARD;
 	}
-    printk("well_formed\n");
+    
 	fxid = u6id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if(fxid){
 	  /* Reached tunnel destination; advance last node. */
@@ -632,8 +632,8 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	  return XRP_ACT_FORWARD;
 	}
     
-    printk("fxid not found\n");
-	/* Assume an unknown, wll-formed U6ID is a tunnel destination. */
+    
+	/* Assume an unknown, well-formed U6ID is a tunnel destination. */
 	if(!rcu_dereference(u6id_ctx->tunnel_sock)) {
 	  xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->forward_anchor);
 	  rcu_read_unlock();
@@ -641,7 +641,7 @@ static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb) {
 	}
 
 	/* Tunnel socket exist; set up XDST entry. */
-	printk("create tunnel dest\n");
+	
     tunnel = create_u6id_tunnel_dest(xid);
 	if(unlikely(!tunnel)) {
 	  rcu_read_unlock();
